@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 	"io/ioutil"
 	"log"
@@ -30,8 +32,19 @@ type IrtResponse struct {
 }
 
 type Config struct {
-	urlAPI  string
-	urlTest string
+	urlAPI    string
+	urlTest   string
+	redisHost string
+	redisPort string
+}
+
+func redisClient(redisHost string, redisPort string, redisPassword string) *redis.Client {
+	client := redis.NewClient(&redis.Options{
+		Addr:     redisHost + ":" + redisPort,
+		Password: redisPassword,
+		DB:       0,
+	})
+	return client
 }
 
 func readConf() (Config, error) {
@@ -45,6 +58,9 @@ func readConf() (Config, error) {
 
 	config.urlTest = os.Getenv("urlTest")
 	config.urlAPI = os.Getenv("urlAPI")
+
+	config.redisHost = os.Getenv("REDIS_HOST")
+	config.redisPort = os.Getenv("REDIS_PORT")
 
 	return config, nil
 }
@@ -97,6 +113,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to read config: \n%s", err)
 	}
+	rds := redisClient(
+		config.redisHost,
+		config.redisPort,
+		os.Getenv("REDIS_PASSWORD"))
+
+	ping, err := rds.Ping(context.Background()).Result()
+	if err != nil {
+		log.Fatalf("Failed to ping redis service: \n%s", err)
+	}
+	log.Printf("Redis ping:%s", ping)
 
 	url := config.urlAPI
 	log.Printf("target url: %s", url)
