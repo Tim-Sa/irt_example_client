@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 )
 
 type IrtData struct {
@@ -65,7 +66,8 @@ func readConf() (Config, error) {
 	return config, nil
 }
 
-func irtData() (IrtData, error) {
+func irtData(testId int) (IrtData, error) {
+	log.Printf("get irt-data for %d", testId)
 	dataMap := make(map[string]SubjectData)
 
 	subj1 := SubjectData{Task1: 1, Task2: 0, Task3: 0}
@@ -106,6 +108,29 @@ func requestIrt(url string, irtData []byte) IrtResponse {
 	return irtResp
 }
 
+func ProcessIRT(testId int, url string, rds *redis.Client) {
+	// get IRT data from some external source
+	irt, err := irtData(testId)
+	if err != nil {
+		log.Fatalf("Failed to read irt data: \n%s", err)
+	}
+
+	jsonData, err := json.Marshal(irt)
+	irtResult := requestIrt(url, jsonData)
+	jsonIrt, err := json.Marshal(irtResult)
+	if err != nil {
+		log.Fatalf("can't serialize irt request: %s", err)
+	}
+
+	// caching
+	err = rds.Set(context.Background(), strconv.Itoa(testId), jsonIrt, 0).Err()
+	if err != nil {
+		log.Fatalf("can't save data to cache: %s", err)
+	}
+
+	log.Printf("result: %v", irtResult)
+}
+
 func main() {
 	log.Printf("Client started!")
 
@@ -127,13 +152,13 @@ func main() {
 	url := config.urlAPI
 	log.Printf("target url: %s", url)
 
-	irt, err := irtData()
-	if err != nil {
-		log.Fatalf("Failed to read irt data: \n%s", err)
+	testId := 0
+
+	val, err := rds.Get(context.Background(), strconv.Itoa(testId)).Result()
+	if val == "" {
+		ProcessIRT(testId, config.urlAPI, rds)
+	} else {
+		log.Printf("IRT result is %v", val)
 	}
 
-	jsonData, err := json.Marshal(irt)
-
-	irtResult := requestIrt(url, jsonData)
-	log.Printf("result: %v", irtResult)
 }
