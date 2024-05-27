@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	// "database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/go-redis/redis/v8"
@@ -37,6 +38,9 @@ type Config struct {
 	urlTest   string
 	redisHost string
 	redisPort string
+	psqlHost  string
+	psqlPort  string
+	psqlDB    string
 }
 
 func redisClient(redisHost string, redisPort string, redisPassword string) *redis.Client {
@@ -46,6 +50,10 @@ func redisClient(redisHost string, redisPort string, redisPassword string) *redi
 		DB:       0,
 	})
 	return client
+}
+
+func postgresDSN(psqlUser string, psqlPassword string, psqlHost string, psqlPort string, database string) string {
+	return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable", psqlUser, psqlPassword, psqlHost, psqlPort, database)
 }
 
 func readConf() (Config, error) {
@@ -62,6 +70,10 @@ func readConf() (Config, error) {
 
 	config.redisHost = os.Getenv("REDIS_HOST")
 	config.redisPort = os.Getenv("REDIS_PORT")
+
+	config.psqlHost = os.Getenv("POSTGRES_HOST")
+	config.psqlPort = os.Getenv("POSTGRES_PORT")
+	config.psqlDB = os.Getenv("POSTGRES_DATABASE_NAME")
 
 	return config, nil
 }
@@ -148,6 +160,9 @@ func main() {
 		log.Fatalf("Failed to ping redis service: \n%s", err)
 	}
 	log.Printf("Redis ping:%s", ping)
+
+	sqlDSN := postgresDSN(os.Getenv("POSTGRES_USER"), os.Getenv("POSTGRES_PASSWORD"), config.psqlHost, config.psqlPort, config.psqlDB)
+	log.Println(sqlDSN)
 
 	url := config.urlAPI
 	log.Printf("target url: %s", url)
