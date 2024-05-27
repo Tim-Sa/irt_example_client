@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 )
 
 type IrtData struct {
@@ -30,8 +33,19 @@ type IrtResponse struct {
 }
 
 type Config struct {
-	urlAPI  string
-	urlTest string
+	urlAPI    string
+	urlTest   string
+	redisHost string
+	redisPort string
+}
+
+func redisClient(redisHost string, redisPort string, redisPassword string) *redis.Client {
+	client := redis.NewClient(&redis.Options{
+		Addr:     redisHost + ":" + redisPort,
+		Password: redisPassword,
+		DB:       0,
+	})
+	return client
 }
 
 func readConf() (Config, error) {
@@ -46,10 +60,14 @@ func readConf() (Config, error) {
 	config.urlTest = os.Getenv("urlTest")
 	config.urlAPI = os.Getenv("urlAPI")
 
+	config.redisHost = os.Getenv("REDIS_HOST")
+	config.redisPort = os.Getenv("REDIS_PORT")
+
 	return config, nil
 }
 
-func irtData() (IrtData, error) {
+func irtData(testId int) (IrtData, error) {
+	log.Printf("get irt-data for %d", testId)
 	dataMap := make(map[string]SubjectData)
 
 	subj1 := SubjectData{Task1: 1, Task2: 0, Task3: 0}
@@ -90,6 +108,29 @@ func requestIrt(url string, irtData []byte) IrtResponse {
 	return irtResp
 }
 
+func ProcessIRT(testId int, url string, rds *redis.Client) {
+	// get IRT data from some external source
+	irt, err := irtData(testId)
+	if err != nil {
+		log.Fatalf("Failed to read irt data: \n%s", err)
+	}
+
+	jsonData, err := json.Marshal(irt)
+	irtResult := requestIrt(url, jsonData)
+	jsonIrt, err := json.Marshal(irtResult)
+	if err != nil {
+		log.Fatalf("can't serialize irt request: %s", err)
+	}
+
+	// caching
+	err = rds.Set(context.Background(), strconv.Itoa(testId), jsonIrt, 0).Err()
+	if err != nil {
+		log.Fatalf("can't save data to cache: %s", err)
+	}
+
+	log.Printf("result: %v", irtResult)
+}
+
 func main() {
 	log.Printf("Client started!")
 
@@ -97,17 +138,27 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to read config: \n%s", err)
 	}
+	rds := redisClient(
+		config.redisHost,
+		config.redisPort,
+		os.Getenv("REDIS_PASSWORD"))
+
+	ping, err := rds.Ping(context.Background()).Result()
+	if err != nil {
+		log.Fatalf("Failed to ping redis service: \n%s", err)
+	}
+	log.Printf("Redis ping:%s", ping)
 
 	url := config.urlAPI
 	log.Printf("target url: %s", url)
 
-	irt, err := irtData()
-	if err != nil {
-		log.Fatalf("Failed to read irt data: \n%s", err)
+	testId := 0
+
+	val, err := rds.Get(context.Background(), strconv.Itoa(testId)).Result()
+	if val == "" {
+		ProcessIRT(testId, config.urlAPI, rds)
+	} else {
+		log.Printf("IRT result is %v", val)
 	}
 
-	jsonData, err := json.Marshal(irt)
-
-	irtResult := requestIrt(url, jsonData)
-	log.Printf("result: %v", irtResult)
 }
